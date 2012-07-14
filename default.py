@@ -17,11 +17,12 @@ viewMode=str(settings.getSetting("viewMode"))
 def index():
         addDir(translation(30001),"http://thatguywiththeglasses.com/videolinks",'listLatest',"")
         addDir("ThatGuyWithTheGlasses","/videolinks/thatguywiththeglasses/",'listShows',"")
+        addDir("BlisteredThumbs","/bt/",'listShows',"")
         addDir("Team TGWTG","/videolinks/teamt/",'listShows',"")
-        addDir("InkedReality","/videolinks/ir/",'listShows',"")
         addDir("Team NChick","/videolinks/team-nchick/",'listShows',"")
-        addDir("Linkara","/videolinks/linkara/",'listShows',"")
+        addDir("InkedReality","/videolinks/ir/",'listShows',"")
         addDir("Brad Jones","/videolinks/bj/",'listShows',"")
+        addDir("Linkara","/videolinks/linkara/",'listShows',"")
         xbmcplugin.endOfDirectory(pluginhandle)
         if forceViewMode==True:
           xbmc.executebuiltin('Container.SetViewMode('+viewMode+')')
@@ -86,38 +87,43 @@ def listVideos(url):
 
 def playVideo(url):
         content = getUrl(url)
-        match1=re.compile('<iframe src="(.+?)"', re.DOTALL).findall(content)
-        match2=re.compile('<embed wmode="transparent" src="(.+?)"', re.DOTALL).findall(content)
-        match3=re.compile('<param name="movie" value="http://www.springboardplatform.com/mediaplayer/springboard/video/angs001/(.+?)/(.+?)/">', re.DOTALL).findall(content)
+        content = content[:content.find('<div id="video-list" class="video-list">')]
+        match1=re.compile('src="http://blip.tv/play/(.+?)"', re.DOTALL).findall(content)
+        match3=re.compile('name="movie" value="http://www.springboardplatform.com/mediaplayer/springboard/video/(.+?)/(.+?)/(.+?)/">', re.DOTALL).findall(content)
         match4=re.compile('src="http://www.youtube.com/embed/(.+?)"', re.DOTALL).findall(content)
-        if len(match1)>0 or len(match2)>0:
-          if len(match1)>1:
+        match5=re.compile('<a href="http://www.blisteredthumbs.net/(.+?)">', re.DOTALL).findall(content)
+        if len(match3)>0:
+          id1=match3[0][1]
+          id2=match3[0][2]
+          content = getUrl("http://cms.springboard.gorillanation.com/xml_feeds_advanced/index/"+id1+"/rss3/"+id2+"/")
+          match=re.compile('<media:content duration="(.+?)" medium="video" bitrate="(.+?)" fileSize="(.+?)" url="(.+?)"', re.DOTALL).findall(content)
+          listitem = xbmcgui.ListItem(path=match[0][3])
+          return xbmcplugin.setResolvedUrl(pluginhandle, True, listitem)
+        elif len(match1)>0:
+          if len(match1)>1 and url.find("http://www.blisteredthumbs.net/")==-1:
             url = listParts(match1)
           else:
-            if len(match1)>0:
-              url=match1[0]
-            elif len(match2)>0:
-              url=match2[0]
+            url="http://blip.tv/play/"+match1[0]
           content = urllib.unquote_plus(getRedirectedUrl(url))
           match=re.compile('/rss/flash/(.+?)&', re.DOTALL).findall(content)
-          id=match[0]
+          if len(match)>0:
+            id=match[0]
+          elif content.find("http://blip.tv/rss/flash/")>=0:
+            id=content[content.find("http://blip.tv/rss/flash/")+25:]
           if xbox==True:
             listitem = xbmcgui.ListItem(path="plugin://video/BlipTV/?path=/root/video&action=play_video&videoid="+id)
           else:
             listitem = xbmcgui.ListItem(path="plugin://plugin.video.bliptv/?path=/root/video&action=play_video&videoid="+id)
-        elif len(match3)>0:
-          id1=match3[0][0]
-          id2=match3[0][1]
-          content = getUrl("http://cms.springboard.gorillanation.com/xml_feeds_advanced/index/"+id1+"/rss3/"+id2+"/")
-          match=re.compile('<media:content duration="(.+?)" medium="video" bitrate="(.+?)" fileSize="(.+?)" url="(.+?)"', re.DOTALL).findall(content)
-          listitem = xbmcgui.ListItem(path=match[0][3])
+          return xbmcplugin.setResolvedUrl(pluginhandle, True, listitem)
         elif len(match4)>0:
           id=match4[0]
           if xbox==True:
             listitem = xbmcgui.ListItem(path="plugin://video/Youtube/?path=/root/video&action=play_video&videoid="+id)
           else:
             listitem = xbmcgui.ListItem(path="plugin://plugin.video.youtube/?path=/root/video&action=play_video&videoid="+id)
-        return xbmcplugin.setResolvedUrl(pluginhandle, True, listitem)
+          return xbmcplugin.setResolvedUrl(pluginhandle, True, listitem)
+        elif len(match5)>0:
+          playVideo("http://www.blisteredthumbs.net/"+match5[0])
 
 def listParts(match):
         i=1
@@ -125,7 +131,7 @@ def listParts(match):
         partUrls=[]
         for url in match:
           partNames.append("Part "+str(i))
-          partUrls.append(url)
+          partUrls.append("http://blip.tv/play/"+url)
           i+=1
         dialog = xbmcgui.Dialog()
         nr=dialog.select("Parts", partNames)
@@ -133,7 +139,7 @@ def listParts(match):
           return partUrls[nr]
 
 def cleanTitle(title):
-        title=title.replace("&lt;","<").replace("&gt;",">").replace("&amp;","&").replace("&#039;","\\").replace("&quot;","\"").replace("&szlig;","ß").replace("&ndash;","-")
+        title=title.replace("&lt;","<").replace("&gt;",">").replace("&amp;","&").replace("&#039;","'").replace("&quot;","\"").replace("&szlig;","ß").replace("&ndash;","-")
         title=title.replace("&Auml;","Ä").replace("&Uuml;","Ü").replace("&Ouml;","Ö").replace("&auml;","ä").replace("&uuml;","ü").replace("&ouml;","ö")
         title=title.strip()
         return title
