@@ -5,22 +5,28 @@ import urllib2
 import socket
 import re
 import sys
+import os
 import xbmcplugin
 import xbmcgui
 import xbmcaddon
 
+#addon = xbmcaddon.Addon()
+#addonID = addon.getAddonInfo('id')
+addonID = 'plugin.video.thatguywiththeglasses_com'
+addon = xbmcaddon.Addon(id=addonID)
 socket.setdefaulttimeout(30)
 pluginhandle = int(sys.argv[1])
 xbox = xbmc.getCondVisibility("System.Platform.xbox")
-addon = xbmcaddon.Addon(id='plugin.video.thatguywiththeglasses_com')
 translation = addon.getLocalizedString
-
 forceViewMode = addon.getSetting("forceViewMode") == "true"
 viewMode = str(addon.getSetting("viewMode"))
-
+addonDir = xbmc.translatePath(addon.getAddonInfo('path'))
+icon = os.path.join(addonDir, 'icon.png')
+channelFavsFile = xbmc.translatePath(os.path.join(addon.getAddonInfo('profile'), addonID+".favorites"))
 
 def index():
     addDir(translation(30001), "http://thatguywiththeglasses.com/videolinks", 'listLatest', "")
+    addDir(translation(30003), "", 'listShowsFavs', '')
     addDir("ThatGuyWithTheGlasses", "/videolinks/thatguywiththeglasses/", 'listShows', "")
     addDir("BlisteredThumbs", "/bt/", 'listShows', "")
     addDir("Team TGWTG", "/videolinks/teamt/", 'listShows', "")
@@ -41,10 +47,63 @@ def listShows(urlMain):
         match = re.compile('<span>(.+?)</span>', re.DOTALL).findall(entry)
         title = match[0]
         title = cleanTitle(title)
-        addDir(title, url, 'listVideos', "")
+        addShowDir(title, url, 'listVideos', "")
     xbmcplugin.endOfDirectory(pluginhandle)
     if forceViewMode:
         xbmc.executebuiltin('Container.SetViewMode('+viewMode+')')
+
+
+def listShowsFavs():
+    xbmcplugin.addSortMethod(pluginhandle, xbmcplugin.SORT_METHOD_LABEL)
+    if os.path.exists(channelFavsFile):
+        fh = open(channelFavsFile, 'r')
+        all_lines = fh.readlines()
+        for line in all_lines:
+            title = line[line.find("###TITLE###=")+12:]
+            title = title[:title.find("#")]
+            url = line[line.find("###URL###=")+10:]
+            url = url[:url.find("#")]
+            thumb = line[line.find("###THUMB###=")+12:]
+            thumb = thumb[:thumb.find("#")]
+            if url.endswith("gzsz.php"):
+                addShowRDir(title, urllib.unquote_plus(url), "listSeasons", thumb)
+            else:
+                addShowRDir(title, urllib.unquote_plus(url), "listVideos", thumb)
+        fh.close()
+    xbmcplugin.endOfDirectory(pluginhandle)
+    if forceViewMode:
+        xbmc.executebuiltin('Container.SetViewMode('+viewMode+')')
+
+
+def favs(param):
+    mode = param[param.find("###MODE###=")+11:]
+    mode = mode[:mode.find("###")]
+    channelEntry = param[param.find("###TITLE###="):]
+    if mode == "ADD":
+        if os.path.exists(channelFavsFile):
+            fh = open(channelFavsFile, 'r')
+            content = fh.read()
+            fh.close()
+            if content.find(channelEntry) == -1:
+                fh = open(channelFavsFile, 'a')
+                fh.write(channelEntry+"\n")
+                fh.close()
+        else:
+            fh = open(channelFavsFile, 'a')
+            fh.write(channelEntry+"\n")
+            fh.close()
+    elif mode == "REMOVE":
+        refresh = param[param.find("###REFRESH###=")+14:]
+        refresh = refresh[:refresh.find("#")]
+        fh = open(channelFavsFile, 'r')
+        content = fh.read()
+        fh.close()
+        entry = content[content.find(channelEntry):]
+        fh = open(channelFavsFile, 'w')
+        fh.write(content.replace(channelEntry+"\n", ""))
+        fh.close()
+        if refresh == "TRUE":
+            xbmc.executebuiltin("Container.Refresh")
 
 
 def listLatest(url):
@@ -85,8 +144,8 @@ def listVideos(url):
         match = re.compile('<td  headers="tableOrdering2">\n(.+?)</td>', re.DOTALL).findall(entry)
         date = ""
         if match:
-            date = " ("+match[0].strip()+")"
-        addLink(title+date, url, 'playVideo', "")
+            title = title+" - "+match[0].strip()
+        addLink(title, url, 'playVideo', "")
     xbmcplugin.endOfDirectory(pluginhandle)
     if forceViewMode:
         xbmc.executebuiltin('Container.SetViewMode('+viewMode+')')
@@ -95,9 +154,9 @@ def listVideos(url):
 def playVideo(url):
     content = getUrl(url)
     content = content[:content.find('<div id="video-list" class="video-list">')]
-    match1 = re.compile('src="http://blip.tv/play/(.+?)"', re.DOTALL).findall(content)
+    match1 = re.compile('blip.tv/play/(.+?)"', re.DOTALL).findall(content)
     match3 = re.compile('name="movie" value="http://www.springboardplatform.com/mediaplayer/springboard/video/(.+?)/(.+?)/(.+?)/">', re.DOTALL).findall(content)
-    match4 = re.compile('src="http://www.youtube.com/embed/(.+?)"', re.DOTALL).findall(content)
+    match4 = re.compile('youtube.com/embed/(.+?)"', re.DOTALL).findall(content)
     match5 = re.compile('<a href="http://www.blisteredthumbs.net/(.+?)">', re.DOTALL).findall(content)
     if match3:
         id1 = match3[0][1]
@@ -111,24 +170,34 @@ def playVideo(url):
             url = listParts(match1)
         else:
             url = "http://blip.tv/play/"+match1[0]
-            url = url.replace(".x?p=1", "")
+            url = url[:url.rfind('.')]
         content = urllib.unquote_plus(getRedirectedUrl(url))
-        if content.find("http://blip.tv/rss/flash/") >= 0:
-            id = content[content.find("http://blip.tv/rss/flash/")+25:]
-        if xbox == True:
-            listitem = xbmcgui.ListItem(path="plugin://video/BlipTV/?path=/root/video&action=play_video&videoid="+id)
-        else:
-            listitem = xbmcgui.ListItem(path="plugin://plugin.video.bliptv/?path=/root/video&action=play_video&videoid="+id)
-        return xbmcplugin.setResolvedUrl(pluginhandle, True, listitem)
+        if "file=" in content:
+            id = content[content.find("/rss/flash/")+11:]
+            if "&" in id:
+                id = id[:id.find("&")]
+            if xbox:
+                listitem = xbmcgui.ListItem(path="plugin://video/Blip.tv/?mode=playVideo&url="+id)
+            else:
+                listitem = xbmcgui.ListItem(path="plugin://plugin.video.blip_tv/?mode=playVideo&url="+id)
+            return xbmcplugin.setResolvedUrl(pluginhandle, True, listitem)
     elif match4:
         id = match4[0]
-        if xbox == True:
+        if "?" in id:
+            id = id[:id.find("?")]
+        if xbox:
             listitem = xbmcgui.ListItem(path="plugin://video/Youtube/?path=/root/video&action=play_video&videoid="+id)
         else:
             listitem = xbmcgui.ListItem(path="plugin://plugin.video.youtube/?path=/root/video&action=play_video&videoid="+id)
         return xbmcplugin.setResolvedUrl(pluginhandle, True, listitem)
     elif match5:
         playVideo("http://www.blisteredthumbs.net/"+match5[0])
+
+
+def queueVideo(url, name):
+    playlist = xbmc.PlayList(xbmc.PLAYLIST_VIDEO)
+    listitem = xbmcgui.ListItem(name)
+    playlist.add(url, listitem)
 
 
 def listParts(match):
@@ -152,9 +221,16 @@ def cleanTitle(title):
     return title
 
 
+def getPluginUrl():
+    if xbox:
+        return "plugin://video/"+addon.getAddonInfo('name')+"/"
+    else:
+        return "plugin://"+addonID+"/"
+
+
 def getRedirectedUrl(url):
     req = urllib2.Request(url)
-    req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 6.1; rv:22.0) Gecko/20100101 Firefox/22.0')
+    req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 6.1; rv:24.0) Gecko/20100101 Firefox/24.0')
     response = urllib2.urlopen(req)
     response.close()
     return str(response.geturl())
@@ -166,7 +242,7 @@ def getUrl(url, data=None):
         req.add_header('Content-Type', 'application/x-www-form-urlencoded')
     else:
         req = urllib2.Request(url)
-    req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 6.1; rv:22.0) Gecko/20100101 Firefox/22.0')
+    req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 6.1; rv:24.0) Gecko/20100101 Firefox/24.0')
     response = urllib2.urlopen(req)
     link = response.read()
     response.close()
@@ -174,7 +250,6 @@ def getUrl(url, data=None):
 
 
 def parameters_string_to_dict(parameters):
-    ''' Convert parameters encoded in a URL to a dict. '''
     paramDict = {}
     if parameters:
         paramPairs = parameters[1:].split("&")
@@ -188,9 +263,10 @@ def parameters_string_to_dict(parameters):
 def addLink(name, url, mode, iconimage):
     u = sys.argv[0]+"?url="+urllib.quote_plus(url)+"&mode="+str(mode)
     ok = True
-    liz = xbmcgui.ListItem(name, iconImage="DefaultVideo.png", thumbnailImage=iconimage)
+    liz = xbmcgui.ListItem(name, iconImage=icon, thumbnailImage=iconimage)
     liz.setInfo(type="Video", infoLabels={"Title": name})
     liz.setProperty('IsPlayable', 'true')
+    liz.addContextMenuItems([(translation(30002), 'RunPlugin(plugin://'+addonID+'/?mode=queueVideo&url='+urllib.quote_plus(u)+'&name='+urllib.quote_plus(name)+')',)])
     ok = xbmcplugin.addDirectoryItem(handle=int(sys.argv[1]), url=u, listitem=liz)
     return ok
 
@@ -198,14 +274,37 @@ def addLink(name, url, mode, iconimage):
 def addDir(name, url, mode, iconimage):
     u = sys.argv[0]+"?url="+urllib.quote_plus(url)+"&mode="+str(mode)
     ok = True
-    liz = xbmcgui.ListItem(name, iconImage="DefaultFolder.png", thumbnailImage=iconimage)
+    liz = xbmcgui.ListItem(name, iconImage=icon, thumbnailImage=iconimage)
     liz.setInfo(type="Video", infoLabels={"Title": name})
+    ok = xbmcplugin.addDirectoryItem(handle=int(sys.argv[1]), url=u, listitem=liz, isFolder=True)
+    return ok
+
+
+def addShowDir(name, url, mode, iconimage):
+    u = sys.argv[0]+"?url="+urllib.quote_plus(url)+"&mode="+str(mode)
+    ok = True
+    liz = xbmcgui.ListItem(name, iconImage=icon, thumbnailImage=iconimage)
+    liz.setInfo(type="Video", infoLabels={"Title": name})
+    playListInfos = "###MODE###=ADD###TITLE###="+name+"###URL###="+urllib.quote_plus(url)+"###THUMB###="+iconimage+"###END###"
+    liz.addContextMenuItems([(translation(30004), 'RunPlugin('+getPluginUrl()+'/?mode=favs&url='+urllib.quote_plus(playListInfos)+')',)])
+    ok = xbmcplugin.addDirectoryItem(handle=int(sys.argv[1]), url=u, listitem=liz, isFolder=True)
+    return ok
+
+
+def addShowRDir(name, url, mode, iconimage):
+    u = sys.argv[0]+"?url="+urllib.quote_plus(url)+"&mode="+str(mode)
+    ok = True
+    liz = xbmcgui.ListItem(name, iconImage=icon, thumbnailImage=iconimage)
+    liz.setInfo(type="Video", infoLabels={"Title": name})
+    playListInfos = "###MODE###=REMOVE###REFRESH###=TRUE###TITLE###="+name+"###URL###="+urllib.quote_plus(url)+"###THUMB###="+iconimage+"###END###"
+    liz.addContextMenuItems([(translation(30005), 'RunPlugin('+getPluginUrl()+'/?mode=favs&url='+urllib.quote_plus(playListInfos)+')',)])
     ok = xbmcplugin.addDirectoryItem(handle=int(sys.argv[1]), url=u, listitem=liz, isFolder=True)
     return ok
 
 params = parameters_string_to_dict(sys.argv[2])
 mode = urllib.unquote_plus(params.get('mode', ''))
 url = urllib.unquote_plus(params.get('url', ''))
+name = urllib.unquote_plus(params.get('name', ''))
 
 if mode == 'listVideos':
     listVideos(url)
@@ -215,5 +314,11 @@ elif mode == 'listLatest':
     listLatest(url)
 elif mode == 'playVideo':
     playVideo(url)
+elif mode == 'queueVideo':
+    queueVideo(url, name)
+elif mode == 'listShowsFavs':
+    listShowsFavs()
+elif mode == 'favs':
+    favs(url)
 else:
     index()
